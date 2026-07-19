@@ -52,7 +52,13 @@ def triage_incident(client: anthropic.Anthropic, description: str) -> IncidentTr
         messages=[{"role": "user", "content": description}],
         output_format=IncidentTriage,
     )
-    return response.parsed_output
+    parsed = next(
+        (block.parsed_output for block in response.content if block.type == "text"),
+        None,
+    )
+    if parsed is None:
+        raise ValueError("Claude returned no parsed structured output for this incident")
+    return parsed
 
 
 def generate_ops_digest(client: anthropic.Anthropic, incidents: list[dict]) -> str:
