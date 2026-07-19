@@ -131,10 +131,16 @@ def render_fan_assistant(client: anthropic.Anthropic):
             st.markdown(question)
 
         with st.chat_message("assistant"):
+            answer = None
             with st.spinner("Checking stadium info..."):
-                answer = ask_fan_assistant(client, question)
-            st.markdown(answer)
-        st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                try:
+                    answer = ask_fan_assistant(client, question)
+                except anthropic.APIError as e:
+                    st.error(f"Claude API error: {e}")
+            if answer:
+                st.markdown(answer)
+        if answer:
+            st.session_state.chat_history.append({"role": "assistant", "content": answer})
 
 
 def render_ops_control_room(client: anthropic.Anthropic):
@@ -153,15 +159,20 @@ def render_ops_control_room(client: anthropic.Anthropic):
 
     if submitted and incident_text.strip():
         with st.spinner("Triaging incident..."):
-            triage = triage_incident(client, incident_text)
-        st.session_state.incidents.insert(0, {
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "text": incident_text,
-            "category": triage.category,
-            "urgency": triage.urgency,
-            "recommended_action": triage.recommended_action,
-            "dispatch": triage.requires_immediate_dispatch,
-        })
+            try:
+                triage = triage_incident(client, incident_text)
+            except anthropic.APIError as e:
+                triage = None
+                st.error(f"Claude API error: {e}")
+        if triage:
+            st.session_state.incidents.insert(0, {
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "text": incident_text,
+                "category": triage.category,
+                "urgency": triage.urgency,
+                "recommended_action": triage.recommended_action,
+                "dispatch": triage.requires_immediate_dispatch,
+            })
 
     urgency_color = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
 
@@ -180,10 +191,15 @@ def render_ops_control_room(client: anthropic.Anthropic):
 
         st.divider()
         if st.button("📋 Generate Live Ops Digest", type="primary"):
+            digest = None
             with st.spinner("Summarizing for the control room..."):
-                digest = generate_ops_digest(client, st.session_state.incidents)
-            st.subheader("Live Ops Digest")
-            st.info(digest)
+                try:
+                    digest = generate_ops_digest(client, st.session_state.incidents)
+                except anthropic.APIError as e:
+                    st.error(f"Claude API error: {e}")
+            if digest:
+                st.subheader("Live Ops Digest")
+                st.info(digest)
     else:
         st.info("No incidents logged yet — submit one above to see triage in action.")
 
