@@ -19,6 +19,7 @@ st.set_page_config(
 )
 
 
+@st.cache_resource
 def get_client() -> genai.Client:
     api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
