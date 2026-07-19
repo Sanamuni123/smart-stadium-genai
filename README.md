@@ -10,7 +10,7 @@ built around two personas that share one venue knowledge base and one incident f
 - **Ops Control Room** — an incident-triage and real-time decision-support tool
   for volunteers, staff, and the control room commander.
 
-Live demo: **[add your deployed Streamlit URL here]**
+Live demo: **[smart-stadium-genai-bsf6mig8o5dk5uwyu9osmi.streamlit.app](https://smart-stadium-genai-bsf6mig8o5dk5uwyu9osmi.streamlit.app/)**
 
 ## How this maps to the challenge
 
