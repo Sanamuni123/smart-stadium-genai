@@ -1,33 +1,10 @@
 """Offline smoke test: verifies triage_incident's response-parsing logic against a
-constructed ParsedMessage, without making a real network call. Not part of the
-Streamlit app; run manually with `python test_offline_smoke.py`."""
+mocked Gemini client, without making a real network call. Not part of the Streamlit
+app; run manually with `python test_offline_smoke.py`."""
 
 from unittest.mock import MagicMock
 
-from anthropic.types.parsed_message import ParsedMessage, ParsedTextBlock
-
 from app import IncidentTriage, triage_incident
-
-
-def build_fake_parsed_response(triage: IncidentTriage) -> ParsedMessage:
-    text_block = ParsedTextBlock.model_construct(
-        type="text",
-        text=triage.model_dump_json(),
-        citations=None,
-        parsed_output=triage,
-    )
-    return ParsedMessage.model_construct(
-        id="msg_test",
-        content=[text_block],
-        model="claude-sonnet-5",
-        role="assistant",
-        stop_reason="end_turn",
-        stop_sequence=None,
-        type="message",
-        usage=None,
-        container=None,
-        stop_details=None,
-    )
 
 
 def main():
@@ -38,14 +15,27 @@ def main():
         requires_immediate_dispatch=True,
     )
 
+    fake_response = MagicMock()
+    fake_response.parsed = expected
+
     fake_client = MagicMock()
-    fake_client.messages.parse.return_value = build_fake_parsed_response(expected)
+    fake_client.models.generate_content.return_value = fake_response
 
     result = triage_incident(fake_client, "Queue backing up badly at Gate A, wait is 20+ minutes")
 
     assert result == expected, f"Mismatch: {result}"
-    assert fake_client.messages.parse.call_args.kwargs["output_format"] is IncidentTriage
-    print("OK: triage_incident correctly reads parsed_output from the text content block")
+    call_kwargs = fake_client.models.generate_content.call_args.kwargs
+    assert call_kwargs["config"].response_schema is IncidentTriage
+    print("OK: triage_incident correctly reads .parsed from the Gemini response")
+
+    fallback_response = MagicMock()
+    fallback_response.parsed = None
+    fallback_response.text = expected.model_dump_json()
+    fake_client.models.generate_content.return_value = fallback_response
+
+    result_fallback = triage_incident(fake_client, "Same incident again")
+    assert result_fallback == expected, f"Fallback mismatch: {result_fallback}"
+    print("OK: triage_incident falls back to parsing .text when .parsed is None")
 
 
 if __name__ == "__main__":

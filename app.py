@@ -2,13 +2,15 @@ import os
 from datetime import datetime
 from typing import Literal
 
-import anthropic
 import streamlit as st
+from google import genai
+from google.genai import errors as genai_errors
+from google.genai import types
 from pydantic import BaseModel
 
 from stadium_kb import SYSTEM_PROMPT
 
-MODEL = "claude-sonnet-5"
+MODEL = "gemini-3.5-flash"
 
 st.set_page_config(
     page_title="Smart Stadium Copilot — FIFA World Cup 2026",
@@ -17,16 +19,16 @@ st.set_page_config(
 )
 
 
-def get_client() -> anthropic.Anthropic:
-    api_key = st.secrets.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", "")
+def get_client() -> genai.Client:
+    api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         st.error(
-            "No ANTHROPIC_API_KEY configured. Add it under this app's Settings → Secrets "
-            "on Streamlit Community Cloud, or set the ANTHROPIC_API_KEY environment "
-            "variable when running locally."
+            "No GEMINI_API_KEY configured. Add it under this app's Settings → Secrets "
+            "on Streamlit Community Cloud, or set the GEMINI_API_KEY environment "
+            "variable when running locally. Get a free key at aistudio.google.com."
         )
         st.stop()
-    return anthropic.Anthropic(api_key=api_key)
+    return genai.Client(api_key=api_key)
 
 
 class IncidentTriage(BaseModel):
@@ -39,29 +41,28 @@ class IncidentTriage(BaseModel):
     requires_immediate_dispatch: bool
 
 
-def triage_incident(client: anthropic.Anthropic, description: str) -> IncidentTriage:
-    response = client.messages.parse(
+def triage_incident(client: genai.Client, description: str) -> IncidentTriage:
+    response = client.models.generate_content(
         model=MODEL,
-        max_tokens=512,
-        system=(
-            "You triage incident reports called in by volunteers and staff at a FIFA World Cup "
-            "2026 stadium. Classify each report and recommend one concrete next action for the "
-            "control room. Set requires_immediate_dispatch=true only for medical emergencies, "
-            "security threats, or crowd-crush risk — not for routine facilities issues."
+        contents=description,
+        config=types.GenerateContentConfig(
+            system_instruction=(
+                "You triage incident reports called in by volunteers and staff at a FIFA World "
+                "Cup 2026 stadium. Classify each report and recommend one concrete next action "
+                "for the control room. Set requires_immediate_dispatch=true only for medical "
+                "emergencies, security threats, or crowd-crush risk — not for routine facilities "
+                "issues."
+            ),
+            response_mime_type="application/json",
+            response_schema=IncidentTriage,
         ),
-        messages=[{"role": "user", "content": description}],
-        output_format=IncidentTriage,
     )
-    parsed = next(
-        (block.parsed_output for block in response.content if block.type == "text"),
-        None,
-    )
-    if parsed is None:
-        raise ValueError("Claude returned no parsed structured output for this incident")
-    return parsed
+    if response.parsed is not None:
+        return response.parsed
+    return IncidentTriage.model_validate_json(response.text)
 
 
-def generate_ops_digest(client: anthropic.Anthropic, incidents: list[dict]) -> str:
+def generate_ops_digest(client: genai.Client, incidents: list[dict]) -> str:
     incident_lines = "\n".join(
         f"- [{i['urgency'].upper()}] {i['category']}: {i['text']} "
         f"(suggested: {i['recommended_action']})"
@@ -74,22 +75,17 @@ def generate_ops_digest(client: anthropic.Anthropic, incidents: list[dict]) -> s
         "commander, ordered by urgency and operational impact. Be direct and operational — "
         "this is read under time pressure during a live event."
     )
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return next((block.text for block in response.content if block.type == "text"), "")
+    response = client.models.generate_content(model=MODEL, contents=prompt)
+    return response.text
 
 
-def ask_fan_assistant(client: anthropic.Anthropic, question: str) -> str:
-    response = client.messages.create(
+def ask_fan_assistant(client: genai.Client, question: str) -> str:
+    response = client.models.generate_content(
         model=MODEL,
-        max_tokens=1024,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": question}],
+        contents=question,
+        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
     )
-    return next((block.text for block in response.content if block.type == "text"), "")
+    return response.text
 
 
 def render_sidebar():
@@ -102,18 +98,18 @@ def render_sidebar():
 - **Multilingual navigation & accessibility** — Fan Assistant answers in whatever
   language a fan asks in, grounded in venue facts (no hallucinated gate numbers).
 - **Operational intelligence** — free-text incident reports are classified into
-  category/urgency/action via Claude's structured outputs.
+  category/urgency/action via structured outputs.
 - **Real-time decision support** — the Ops Digest turns a pile of raw incident
   reports into a prioritized action list for the control room, on demand.
 
-Model: `claude-sonnet-5`
+Model: `gemini-3.5-flash` (Google AI Studio, free tier)
             """
         )
         st.divider()
         st.caption("Demo venue and incidents are simulated for this submission.")
 
 
-def render_fan_assistant(client: anthropic.Anthropic):
+def render_fan_assistant(client: genai.Client):
     st.header("🗣️ Fan Assistant")
     st.caption("Ask about navigation, accessibility, transport, or sustainability — in any language.")
 
@@ -135,15 +131,15 @@ def render_fan_assistant(client: anthropic.Anthropic):
             with st.spinner("Checking stadium info..."):
                 try:
                     answer = ask_fan_assistant(client, question)
-                except anthropic.APIError as e:
-                    st.error(f"Claude API error: {e}")
+                except genai_errors.APIError as e:
+                    st.error(f"Gemini API error: {e}")
             if answer:
                 st.markdown(answer)
         if answer:
             st.session_state.chat_history.append({"role": "assistant", "content": answer})
 
 
-def render_ops_control_room(client: anthropic.Anthropic):
+def render_ops_control_room(client: genai.Client):
     st.header("🛠️ Ops Control Room")
     st.caption("Simulates volunteers/staff phoning in incidents during the tournament.")
 
@@ -161,9 +157,9 @@ def render_ops_control_room(client: anthropic.Anthropic):
         with st.spinner("Triaging incident..."):
             try:
                 triage = triage_incident(client, incident_text)
-            except anthropic.APIError as e:
+            except genai_errors.APIError as e:
                 triage = None
-                st.error(f"Claude API error: {e}")
+                st.error(f"Gemini API error: {e}")
         if triage:
             st.session_state.incidents.insert(0, {
                 "time": datetime.now().strftime("%H:%M:%S"),
@@ -195,8 +191,8 @@ def render_ops_control_room(client: anthropic.Anthropic):
             with st.spinner("Summarizing for the control room..."):
                 try:
                     digest = generate_ops_digest(client, st.session_state.incidents)
-                except anthropic.APIError as e:
-                    st.error(f"Claude API error: {e}")
+                except genai_errors.APIError as e:
+                    st.error(f"Gemini API error: {e}")
             if digest:
                 st.subheader("Live Ops Digest")
                 st.info(digest)
